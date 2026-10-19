@@ -1,0 +1,21 @@
+[Unit]
+Description=custom-rpi-mqtt-monitor (Raspberry Pi -> MQTT -> Home Assistant)
+Documentation=https://github.com/patyiandras/custom-rpi-mqtt-monitor
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=rpimon
+Group=rpimon
+ExecStart=/usr/bin/python3 /opt/rpi-mqtt-monitor/rpi_mqtt_monitor.py --config /etc/rpi-mqtt-monitor/config.toml
+Restart=always
+RestartSec=10
+StateDirectory=rpi-mqtt-monitor
+# Védelem (a NoNewPrivileges nem kapcsolható be: a szűkített sudo kell az újraindításokhoz)
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,48 @@
+# custom-rpi-mqtt-monitor beállítás — helye a Pi-n: /etc/rpi-mqtt-monitor/config.toml
+# Módosítás után:  sudo ./install.sh   (újragenerálja a sudo-jogokat is, és újraindítja a szolgáltatást)
+
+[mqtt]
+host = "192.168.0.137"        # a Home Assistant / Mosquitto címe
+port = 1883
+username = "pi4b"             # saját MQTT-felhasználó a Pi-nek (Mosquitto add-on: logins)
+password = "IDE_A_JELSZO"
+# tls = true                  # ha a broker TLS-t kér (ilyenkor port = 8883)
+# ca_certs = "/etc/ssl/certs/ca-certificates.crt"
+discovery_prefix = "homeassistant"
+base_topic = "rpi-mqtt-monitor"
+
+[device]
+id = "pi4b"                   # entitás-id előtag: sensor.pi4b_cpu_homerseklet, ...
+name = "Raspberry Pi 4B"
+
+[intervals]
+fast = 30                     # mp: CPU, RAM, hőmérséklet, hálózat, szolgáltatások, konténerek
+slow = 300                    # mp: lemezek, SMART, image-lista
+updates = 3600                # mp: apt-frissítések, Docker image-frissítések (registry)
+
+[services]
+# Figyelt systemd unitok (glob is lehet; utótag nélkül .service). Állapot + napló + újraindítás.
+units = ["ssh", "docker", "containerd", "cloudflared*", "cockpit.socket"]
+restart = true
+
+[docker]
+enabled = true
+restart = true                # konténer-újraindítás HA-ból
+exclude = []                  # ezeket a konténereket nem figyeli (név szerint)
+image_update_check = true     # óránként összeveti az image digestjét a registryvel
+
+[disks]
+mounts = []                   # üres = minden valós csatolási pont (az exclude_mounts kivételével)
+exclude_mounts = ["/boot", "/boot/firmware"]
+smart = true                  # SMART-állapot és -hőmérséklet (smartctl; alvó HDD-t nem ébreszt)
+# Ha az USB-s SSD-t HDD-nek (vagy fordítva) mutatná, itt felülírható:
+# labels = { sda = "SSD", sdb = "HDD" }
+
+[system]
+allow_reboot = true
+allow_shutdown = true
+command_grace = 60            # indulás után ennyi mp-ig nem fogad újraindítás/leállítás parancsot
+command_cooldown = 30         # ugyanaz a parancs legfeljebb ennyi mp-enként egyszer
+
+[logs]
+lines = 40                    # ennyi naplósor a „Napló” szenzor attribútumában
