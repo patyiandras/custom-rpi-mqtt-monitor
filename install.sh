@@ -98,6 +98,32 @@ PYEOF
 }
 
 if [ -t 0 ]; then
+  # --- Mit kell előtte a Home Assistantban beállítani (rövid sorok: telefonos terminálban is olvasható)
+  HA_USER=$(conf_value mqtt username); HA_USER=${HA_USER:-pi4b}
+  cat <<EOF
+
+------------------------------------------------------------
+ Home Assistant oldalon ehhez ez kell (ha még nincs meg):
+
+ 1. Mosquitto broker bővítmény:
+    Beállítások > Bővítmények > Bővítménybolt
+    > Mosquitto broker > Telepítés, majd Indítás.
+
+ 2. Saját MQTT-felhasználó ennek a gépnek:
+    Mosquitto broker > Konfiguráció > logins:
+      - username: $HA_USER
+        password: <hosszú, véletlen jelszó>
+    Mentés, majd a bővítmény újraindítása.
+
+ 3. MQTT integráció: Beállítások > Eszközök és
+    szolgáltatások > MQTT (a Mosquitto után a HA
+    felajánlja, elég jóváhagyni).
+
+ A broker címe a HA gép IP-címe, port: 1883.
+ Ezután a gép magától megjelenik a HA-ban eszközként.
+------------------------------------------------------------
+
+EOF
   # --- MQTT-adatok (Enter = a meglévő marad). A jelszót addig kéri, amíg a broker el nem fogadja.
   OK=0
   for attempt in 1 2 3; do
