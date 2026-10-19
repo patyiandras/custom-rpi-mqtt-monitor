@@ -86,10 +86,13 @@ Mentés, majd a bővítmény újraindítása.
 ```bash
 git clone https://github.com/patyiandras/custom-rpi-mqtt-monitor.git
 cd custom-rpi-mqtt-monitor
-sudo ./install.sh        # első futás: létrehozza a /etc/rpi-mqtt-monitor/config.toml-t, és kilép
-sudo nano /etc/rpi-mqtt-monitor/config.toml   # MQTT-jelszó, figyelt szolgáltatások
-sudo ./install.sh        # második futás: sudo-jogok, systemd szolgáltatás, indítás
+sudo ./install.sh
 ```
+
+A telepítő bekéri a broker címét, az MQTT-felhasználót és a jelszót. Újrafuttatáskor Enterre a meglévő érték
+marad. A jelszót próba-bejelentkezéssel ellenőrzi, és csak akkor megy tovább, ha a broker elfogadta. A többi
+beállítás (pl. figyelt szolgáltatások) a `/etc/rpi-mqtt-monitor/config.toml`-ban van; módosítás után
+`sudo ./install.sh`. Bejelentkezés-próba külön: `sudo -u rpimon python3 /opt/rpi-mqtt-monitor/rpi_mqtt_monitor.py --test-mqtt`.
 
 Utána a HA-ban: Beállítások → Eszközök és szolgáltatások → MQTT → **Raspberry Pi 4B**.
 

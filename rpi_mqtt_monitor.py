@@ -33,7 +33,7 @@ except ImportError:  # Python < 3.11
         tomllib = None
         import toml
 
-VERSION = "0.1.1"
+VERSION = "0.1.2"
 REPO_URL = "https://github.com/patyiandras/custom-rpi-mqtt-monitor"
 ORIGIN = {"name": "custom-rpi-mqtt-monitor", "sw_version": VERSION, "support_url": REPO_URL}
 
@@ -1076,18 +1076,58 @@ class Monitor:
         print(f"{len(topics)} entitás discovery-je törölve.")
 
 
+def test_mqtt(cfg):
+    """Próba-csatlakozás a brokerhez (a telepítő ezzel ellenőrzi a jelszót). 0 = rendben."""
+    import paho.mqtt.client as mqtt
+    m = cfg["mqtt"]
+    result = {}
+    try:
+        client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"rpi-mqtt-monitor-{cfg['device']['id']}-test")
+    except AttributeError:
+        client = mqtt.Client(client_id=f"rpi-mqtt-monitor-{cfg['device']['id']}-test")
+    if m["username"]:
+        client.username_pw_set(m["username"], m["password"])
+    if m["tls"]:
+        client.tls_set(ca_certs=m["ca_certs"] or None)
+        client.tls_insecure_set(bool(m["tls_insecure"]))
+    client.on_connect = lambda c, u, f, rc, *a: result.setdefault("rc", rc)
+    try:
+        client.connect(m["host"], int(m["port"]), 10)
+    except (OSError, ValueError) as e:
+        print(f"A broker nem érhető el ({m['host']}:{m['port']}): {e}")
+        return 2
+    client.loop_start()
+    deadline = time.monotonic() + 10
+    while "rc" not in result and time.monotonic() < deadline:
+        time.sleep(0.1)
+    client.loop_stop()
+    client.disconnect()
+    rc = result.get("rc")
+    if rc is None:
+        print("Nem jött válasz a brokertől 10 mp alatt.")
+        return 2
+    if getattr(rc, "is_failure", rc != 0):
+        print(f"A broker elutasította a bejelentkezést: {rc}")
+        return 1
+    print(f"MQTT-bejelentkezés rendben ({m['username']}@{m['host']}:{m['port']}).")
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser(description="Raspberry Pi -> MQTT -> Home Assistant monitor")
     ap.add_argument("--config", default="/etc/rpi-mqtt-monitor/config.toml")
     ap.add_argument("--dump", action="store_true", help="adatok kiírása MQTT nélkül")
     ap.add_argument("--print-units", action="store_true", help="a figyelt systemd unitok listája")
     ap.add_argument("--remove-discovery", action="store_true", help="HA-entitások eltávolítása")
+    ap.add_argument("--test-mqtt", action="store_true", help="próba-bejelentkezés a brokerhez")
     ap.add_argument("--debug", action="store_true")
     args = ap.parse_args()
     logging.basicConfig(level=logging.DEBUG if args.debug else logging.INFO,
                         format="%(levelname)s %(message)s" if os.environ.get("INVOCATION_ID")
                         else "%(asctime)s %(levelname)s %(message)s")
     cfg = load_config(args.config)
+    if args.test_mqtt:
+        return test_mqtt(cfg)
     if args.print_units:
         print("\n".join(Services(cfg["services"]).expand()))
         return

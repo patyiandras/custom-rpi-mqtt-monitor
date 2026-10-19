@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ============================================================================
 #  custom-rpi-mqtt-monitor telepítő / frissítő — a Pi-n, a repó mappájából:
-#      sudo ./install.sh              telepítés vagy frissítés (config-módosítás után is ezt futtasd)
+#      sudo ./install.sh              telepítés vagy frissítés (bekéri az MQTT-adatokat; Enter = marad)
 #      sudo ./install.sh --uninstall  eltávolítás (a HA-entitásokat is törli)
 #  Többször is futtatható; a meglévő /etc/rpi-mqtt-monitor/config.toml-hoz nem nyúl.
 # ============================================================================
@@ -51,13 +51,57 @@ echo "=== 4/6 Config: $CONF ==="
 install -d -m 750 -g "$APP_USER" "$CONF_DIR"
 if [ ! -f "$CONF" ]; then
   install -m 640 -g "$APP_USER" "$SRC/config.example.toml" "$CONF"
-  echo
-  echo ">>> Új config létrehozva: $CONF"
-  echo ">>> Írd bele az MQTT-jelszót (és nézd át a figyelt szolgáltatásokat), majd futtasd újra: sudo $0"
-  exit 0
+  echo "Új config létrehozva: $CONF"
 fi
 chgrp "$APP_USER" "$CONF" && chmod 640 "$CONF"
-grep -q 'IDE_A_JELSZO' "$CONF" && { echo "[HIBA] A $CONF-ban még a minta-jelszó van."; exit 1; }
+
+# A config egy [mqtt]-kulcsának átírása (az érték környezeti változóban megy, így nem látszik a ps-ben)
+set_mqtt_value() {
+  KEY="$1" VALUE="$2" CONF="$CONF" python3 - <<'PYEOF'
+import json, os, re
+path, key, value = os.environ["CONF"], os.environ["KEY"], os.environ["VALUE"]
+text = open(path, encoding="utf-8").read()
+line = "%s = %s" % (key, json.dumps(value))
+pattern = r'(?m)^(\s*#?\s*)%s\s*=.*$' % re.escape(key)
+text, n = re.subn(pattern, lambda m: line, text, count=1)
+if not n:
+    text = text.replace("[mqtt]\n", "[mqtt]\n%s\n" % line, 1)
+open(path, "w", encoding="utf-8").write(text)
+PYEOF
+}
+conf_value() {
+  sed -n "s/^$1 *= *\"\(.*\)\".*/\1/p" "$CONF" | head -1
+}
+
+# MQTT-adatok bekérése (Enter = a meglévő marad). A jelszót addig kéri, amíg a broker el nem fogadja.
+if [ -t 0 ]; then
+  OK=0
+  for attempt in 1 2 3; do
+    CUR_HOST=$(conf_value host); CUR_USER=$(conf_value username); CUR_PASS=$(conf_value password)
+    read -r -p "MQTT broker címe [$CUR_HOST]: " NEW_HOST || true
+    read -r -p "MQTT felhasználó [$CUR_USER]: " NEW_USER || true
+    if [ "$CUR_PASS" = "IDE_A_JELSZO" ] || [ -z "$CUR_PASS" ]; then
+      PROMPT="MQTT jelszó: "
+    else
+      PROMPT="MQTT jelszó [Enter = a meglévő marad]: "
+    fi
+    read -r -s -p "$PROMPT" NEW_PASS || true; echo
+    [ -n "$NEW_HOST" ] && set_mqtt_value host "$NEW_HOST"
+    [ -n "$NEW_USER" ] && set_mqtt_value username "$NEW_USER"
+    [ -n "$NEW_PASS" ] && set_mqtt_value password "$NEW_PASS"
+    if [ "$(conf_value password)" = "IDE_A_JELSZO" ] || [ -z "$(conf_value password)" ]; then
+      echo "Jelszó nélkül nem tud csatlakozni, add meg."
+      continue
+    fi
+    if sudo -u "$APP_USER" python3 "$APP_DIR/rpi_mqtt_monitor.py" --config "$CONF" --test-mqtt; then
+      OK=1; break
+    fi
+    echo "Próbáld újra."
+  done
+  [ "$OK" = 1 ] || { echo "[HIBA] Háromszor sem sikerült bejelentkezni a brokerhez."; exit 1; }
+else
+  grep -q 'IDE_A_JELSZO' "$CONF" && { echo "[HIBA] A $CONF-ban még a minta-jelszó van (nem interaktív futás)."; exit 1; }
+fi
 
 echo "=== 5/6 Sudo-jogok (csak a konkrét parancsok): $SUDOERS ==="
 SYSTEMCTL=$(command -v systemctl)
