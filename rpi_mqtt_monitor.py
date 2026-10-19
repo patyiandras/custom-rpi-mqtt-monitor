@@ -33,7 +33,7 @@ except ImportError:  # Python < 3.11
         tomllib = None
         import toml
 
-VERSION = "0.1.3"
+VERSION = "0.1.4"
 REPO_URL = "https://github.com/patyiandras/custom-rpi-mqtt-monitor"
 ORIGIN = {"name": "custom-rpi-mqtt-monitor", "sw_version": VERSION, "support_url": REPO_URL}
 
@@ -392,7 +392,8 @@ class Disks:
 #  systemd szolgáltatások
 # ---------------------------------------------------------------------------
 class Services:
-    PROPS = "Id,Description,LoadState,ActiveState,SubState,ActiveEnterTimestamp,NRestarts,UnitFileState,MainPID"
+    PROPS = ("Id,Description,LoadState,ActiveState,SubState,ActiveEnterTimestamp,ActiveEnterTimestampMonotonic,"
+             "NRestarts,UnitFileState,MainPID")
 
     def __init__(self, cfg):
         self.patterns = cfg["units"]
@@ -427,6 +428,12 @@ class Services:
         since = props.get("ActiveEnterTimestamp", "")
         if since.startswith("@"):
             since = iso(int(since[1:]))
+        elif since:  # régi systemd (Buster): nincs --timestamp=unix, a boot óta eltelt µs-ból számoljuk
+            mono = int(props.get("ActiveEnterTimestampMonotonic") or 0)
+            btime = next((int(line.split()[1]) for line in (read("/proc/stat", "") or "").splitlines()
+                          if line.startswith("btime ")), 0)
+            if mono and btime:
+                since = iso(btime + mono / 1e6)
         return {
             "unit": unit, "description": props.get("Description"), "active": active, "sub": sub,
             "state_text": text, "since": since or None, "restarts": int(props.get("NRestarts") or 0),
