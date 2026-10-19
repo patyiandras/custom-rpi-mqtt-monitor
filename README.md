@@ -90,8 +90,9 @@ cd custom-rpi-mqtt-monitor
 sudo ./install.sh
 ```
 
-A telepítő bekéri a broker címét, az MQTT-felhasználót és a jelszót. Újrafuttatáskor Enterre a meglévő érték
-marad. A jelszót próba-bejelentkezéssel ellenőrzi, és csak akkor megy tovább, ha a broker elfogadta. A többi
+A telepítő bekéri a broker címét, az MQTT-felhasználót és a jelszót, valamint az eszköz HA-beli nevét
+(alapból „Raspberry Pi 4B”) és az entitás-azonosító előtagot (alapból `pi4b` → `sensor.pi4b_…`). Újrafuttatáskor
+Enterre a meglévő érték marad. Ha az előtagot megváltoztatod, a régi előtagú entitásokat előbb törli a HA-ból. A jelszót próba-bejelentkezéssel ellenőrzi, és csak akkor megy tovább, ha a broker elfogadta. A többi
 beállítás (pl. figyelt szolgáltatások) a `/etc/rpi-mqtt-monitor/config.toml`-ban van; módosítás után
 `sudo ./install.sh`. Bejelentkezés-próba külön: `sudo -u rpimon python3 /opt/rpi-mqtt-monitor/rpi_mqtt_monitor.py --test-mqtt`.
 

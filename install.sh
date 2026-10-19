@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ============================================================================
 #  custom-rpi-mqtt-monitor telepítő / frissítő — a Pi-n, a repó mappájából:
-#      sudo ./install.sh              telepítés vagy frissítés (bekéri az MQTT-adatokat; Enter = marad)
+#      sudo ./install.sh              telepítés vagy frissítés (bekéri az MQTT-adatokat és az eszköznevet; Enter = marad)
 #      sudo ./install.sh --uninstall  eltávolítás (a HA-entitásokat is törli)
 #  Többször is futtatható; a meglévő /etc/rpi-mqtt-monitor/config.toml-hoz nem nyúl.
 # ============================================================================
@@ -55,29 +55,53 @@ if [ ! -f "$CONF" ]; then
 fi
 chgrp "$APP_USER" "$CONF" && chmod 640 "$CONF"
 
-# A config egy [mqtt]-kulcsának átírása (az érték környezeti változóban megy, így nem látszik a ps-ben)
-set_mqtt_value() {
-  KEY="$1" VALUE="$2" CONF="$CONF" python3 - <<'PYEOF'
+# A config egy kulcsának olvasása / átírása szakaszon belül ([mqtt] host, [device] name, ...).
+# Az érték környezeti változóban megy át, így nem látszik a ps-ben.
+conf_value() {
+  SECTION="$1" KEY="$2" CONF="$CONF" python3 - <<'PYEOF'
 import json, os, re
-path, key, value = os.environ["CONF"], os.environ["KEY"], os.environ["VALUE"]
-text = open(path, encoding="utf-8").read()
-line = "%s = %s" % (key, json.dumps(value))
-pattern = r'(?m)^(\s*#?\s*)%s\s*=.*$' % re.escape(key)
-text, n = re.subn(pattern, lambda m: line, text, count=1)
-if not n:
-    text = text.replace("[mqtt]\n", "[mqtt]\n%s\n" % line, 1)
-open(path, "w", encoding="utf-8").write(text)
+sec, key = None, os.environ["KEY"]
+for line in open(os.environ["CONF"], encoding="utf-8"):
+    m = re.match(r"\s*\[([^\]]+)\]", line)
+    if m:
+        sec = m.group(1).strip()
+        continue
+    m = re.match(r"\s*%s\s*=\s*(.*)$" % re.escape(key), line)
+    if m and sec == os.environ["SECTION"]:
+        rest = m.group(1).strip()
+        try:
+            value = json.JSONDecoder().raw_decode(rest)[0]
+        except ValueError:
+            value = rest.split("#")[0].strip()
+        print(value)
+        break
 PYEOF
 }
-conf_value() {
-  sed -n "s/^$1 *= *\"\(.*\)\".*/\1/p" "$CONF" | head -1
+set_value() {
+  SECTION="$1" KEY="$2" VALUE="$3" CONF="$CONF" python3 - <<'PYEOF'
+import json, os, re
+path, section, key = os.environ["CONF"], os.environ["SECTION"], os.environ["KEY"]
+new = "%s = %s" % (key, json.dumps(os.environ["VALUE"], ensure_ascii=False))
+lines = open(path, encoding="utf-8").read().split("\n")
+head = next((i for i, l in enumerate(lines) if re.match(r"\s*\[%s\]" % re.escape(section), l)), None)
+if head is None:
+    lines += ["", "[%s]" % section, new]
+else:
+    end = next((i for i in range(head + 1, len(lines)) if re.match(r"\s*\[", lines[i])), len(lines))
+    hit = next((i for i in range(head + 1, end) if re.match(r"\s*#?\s*%s\s*=" % re.escape(key), lines[i])), None)
+    if hit is None:
+        lines.insert(head + 1, new)
+    else:
+        lines[hit] = new
+open(path, "w", encoding="utf-8").write("\n".join(lines))
+PYEOF
 }
 
-# MQTT-adatok bekérése (Enter = a meglévő marad). A jelszót addig kéri, amíg a broker el nem fogadja.
 if [ -t 0 ]; then
+  # --- MQTT-adatok (Enter = a meglévő marad). A jelszót addig kéri, amíg a broker el nem fogadja.
   OK=0
   for attempt in 1 2 3; do
-    CUR_HOST=$(conf_value host); CUR_USER=$(conf_value username); CUR_PASS=$(conf_value password)
+    CUR_HOST=$(conf_value mqtt host); CUR_USER=$(conf_value mqtt username); CUR_PASS=$(conf_value mqtt password)
     read -r -p "MQTT broker címe [$CUR_HOST]: " NEW_HOST || true
     read -r -p "MQTT felhasználó [$CUR_USER]: " NEW_USER || true
     if [ "$CUR_PASS" = "IDE_A_JELSZO" ] || [ -z "$CUR_PASS" ]; then
@@ -86,10 +110,10 @@ if [ -t 0 ]; then
       PROMPT="MQTT jelszó [Enter = a meglévő marad]: "
     fi
     read -r -s -p "$PROMPT" NEW_PASS || true; echo
-    [ -n "$NEW_HOST" ] && set_mqtt_value host "$NEW_HOST"
-    [ -n "$NEW_USER" ] && set_mqtt_value username "$NEW_USER"
-    [ -n "$NEW_PASS" ] && set_mqtt_value password "$NEW_PASS"
-    if [ "$(conf_value password)" = "IDE_A_JELSZO" ] || [ -z "$(conf_value password)" ]; then
+    [ -n "$NEW_HOST" ] && set_value mqtt host "$NEW_HOST"
+    [ -n "$NEW_USER" ] && set_value mqtt username "$NEW_USER"
+    [ -n "$NEW_PASS" ] && set_value mqtt password "$NEW_PASS"
+    if [ "$(conf_value mqtt password)" = "IDE_A_JELSZO" ] || [ -z "$(conf_value mqtt password)" ]; then
       echo "Jelszó nélkül nem tud csatlakozni, add meg."
       continue
     fi
@@ -99,6 +123,27 @@ if [ -t 0 ]; then
     echo "Próbáld újra."
   done
   [ "$OK" = 1 ] || { echo "[HIBA] Háromszor sem sikerült bejelentkezni a brokerhez."; exit 1; }
+
+  # --- Eszköz a HA-ban: megjelenő név és az entitás-id előtag (sensor.<id>_cpu_homerseklet, ...)
+  CUR_NAME=$(conf_value device name); CUR_ID=$(conf_value device id)
+  read -r -p "Eszköz neve a Home Assistantban [$CUR_NAME]: " NEW_NAME || true
+  [ -n "$NEW_NAME" ] && set_value device name "$NEW_NAME"
+  while true; do
+    read -r -p "Entitás-azonosító előtag (kisbetű, szám, _) [$CUR_ID]: " NEW_ID || true
+    NEW_ID=${NEW_ID:-$CUR_ID}
+    [[ "$NEW_ID" =~ ^[a-z0-9_]+$ ]] && break
+    echo "Csak kisbetű, szám és _ lehet (pl. pi4b, nas_pi)."
+  done
+  if [ "$NEW_ID" != "$CUR_ID" ]; then
+    # Új előtag = új entitások: a régi id-jű HA-entitásokat (discovery) előbb eltávolítjuk.
+    if [ -f /var/lib/rpi-mqtt-monitor/discovery.json ]; then
+      echo "Az előtag megváltozott ($CUR_ID -> $NEW_ID): a régi entitások törlése a HA-ból..."
+      systemctl stop rpi-mqtt-monitor.service 2>/dev/null || true
+      STATE_DIRECTORY=/var/lib/rpi-mqtt-monitor python3 "$APP_DIR/rpi_mqtt_monitor.py" --config "$CONF" --remove-discovery || true
+      rm -f /var/lib/rpi-mqtt-monitor/discovery.json
+    fi
+    set_value device id "$NEW_ID"
+  fi
 else
   grep -q 'IDE_A_JELSZO' "$CONF" && { echo "[HIBA] A $CONF-ban még a minta-jelszó van (nem interaktív futás)."; exit 1; }
 fi
