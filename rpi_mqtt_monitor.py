@@ -33,7 +33,7 @@ except ImportError:  # Python < 3.11
         tomllib = None
         import toml
 
-VERSION = "0.1.2"
+VERSION = "0.1.3"
 REPO_URL = "https://github.com/patyiandras/custom-rpi-mqtt-monitor"
 ORIGIN = {"name": "custom-rpi-mqtt-monitor", "sw_version": VERSION, "support_url": REPO_URL}
 
@@ -292,9 +292,18 @@ class Disks:
         self.smart_cache = {}
 
     @staticmethod
-    def parent_disk(dev):
-        name = os.path.basename(os.path.realpath(dev))
-        sys_path = os.path.realpath(f"/sys/class/block/{name}")
+    def parent_disk(dev, mnt=None):
+        sys_path = None
+        if mnt:  # a /dev/root-hoz nincs eszközfájl: a csatolási pont major:minor számából keressük
+            try:
+                st_dev = os.stat(mnt).st_dev
+                sys_path = os.path.realpath(f"/sys/dev/block/{os.major(st_dev)}:{os.minor(st_dev)}")
+            except OSError:
+                sys_path = None
+        if not sys_path or not os.path.exists(sys_path):
+            name = os.path.basename(os.path.realpath(dev))
+            sys_path = os.path.realpath(f"/sys/class/block/{name}")
+        name = os.path.basename(sys_path)
         if os.path.exists(os.path.join(sys_path, "partition")):
             return os.path.basename(os.path.dirname(sys_path))
         return name
@@ -352,7 +361,7 @@ class Disks:
 
     def collect(self):
         disks = {}
-        for dev in sorted({self.parent_disk(d) for d, _, _ in self.mounts()}):
+        for dev in sorted({self.parent_disk(d, m) for d, m, _ in self.mounts()}):
             info = self.smart(dev)
             if info and info.get("standby") and dev in self.smart_cache:
                 info = dict(self.smart_cache[dev], standby=True)
@@ -370,7 +379,7 @@ class Disks:
             total = st.f_blocks * st.f_frsize
             avail = st.f_bavail * st.f_frsize
             used = (st.f_blocks - st.f_bfree) * st.f_frsize
-            disk = self.parent_disk(dev)
+            disk = self.parent_disk(dev, mnt)
             mounts["root" if mnt == "/" else slug(mnt)] = {
                 "mount": mnt, "device": dev, "disk": disk, "fstype": fstype, "kind": self.kind(disk),
                 "usage": round(100 * used / (used + avail), 1) if used + avail else 0,
@@ -425,8 +434,17 @@ class Services:
         }
 
     @staticmethod
-    def logs(unit, n):
-        rc, out, err = run(["journalctl", "-u", unit, "-n", str(n), "--no-pager", "-q", "-o", "short-iso"])
+    def log_command(unit, n):
+        journalctl = shutil.which("journalctl") or "/bin/journalctl"
+        return [journalctl, "-u", unit, "-n", str(n), "--no-pager", "-q", "-o", "short-iso"]
+
+    def logs(self, unit, n):
+        cmd = self.log_command(unit, n)
+        rc, out, err = run(cmd)
+        if rc != 0 or "insufficient permissions" in err or "not seeing messages" in err:
+            rc2, out2, err2 = run(["sudo", "-n", *cmd])  # a telepítő unitonként engedélyezi
+            if rc2 == 0:
+                rc, out, err = rc2, out2, err2
         return log_payload(out.splitlines() if rc == 0 else [f"journalctl hiba: {err.strip()}"], n)
 
     def restart(self, unit):
@@ -478,6 +496,14 @@ class Docker:
             raise DockerError(f"{path}: HTTP {status} {body[:200]!r}")
         return json.loads(body)
 
+    def registry_image(self, image_id):
+        """Registryből húzott-e az image (van RepoDigest)? Helyben épített image-hez nincs frissítés-ellenőrzés."""
+        cache = self.__dict__.setdefault("_registry_cache", {})
+        if image_id not in cache:
+            img = self.get(f"/images/{urllib.parse.quote(image_id, safe=':')}/json")
+            cache[image_id] = any("@" in d for d in img.get("RepoDigests") or [])
+        return cache[image_id]
+
     def containers(self):
         result = {}
         for c in self.get("/containers/json?all=1"):
@@ -500,6 +526,7 @@ class Docker:
                 "restart_count": d.get("RestartCount", 0), "started_at": st.get("StartedAt"),
                 "finished_at": st.get("FinishedAt"), "exit_code": st.get("ExitCode"),
                 "tty": bool(d["Config"].get("Tty")), "compose_project": labels.get("com.docker.compose.project"),
+                "registry_image": self.registry_image(d["Image"]),
             }
         return result
 
@@ -797,7 +824,7 @@ class Monitor:
             if restart_ok:
                 self.button(group, f"{pre}_ujrainditas", "Újraindítás", dev, f"{cmd}/restart",
                             device_class="restart")
-            if kind == "ct" and self.cfg["docker"]["image_update_check"]:
+            if kind == "ct" and self.cfg["docker"]["image_update_check"] and item.get("registry_image"):
                 self.entity(group, "update", f"{pre}_image", "Image", dev, state_topic=f"{topic}/update",
                             entity_category="diagnostic")
 
@@ -1076,6 +1103,21 @@ class Monitor:
         print(f"{len(topics)} entitás discovery-je törölve.")
 
 
+def sudo_commands(cfg):
+    """A telepítő ezekre ad szűkített sudo-jogot (pontosan így hívja őket az ügynök)."""
+    systemctl = shutil.which("systemctl") or "/bin/systemctl"
+    cmds = [f"{systemctl} reboot", f"{systemctl} poweroff"]
+    for unit in Services(cfg["services"]).expand():
+        if cfg["services"]["restart"]:
+            cmds.append(f"{systemctl} restart {unit}")
+        cmds.append(" ".join(Services.log_command(unit, int(cfg["logs"]["lines"]))))
+    smartctl = shutil.which("smartctl")
+    if smartctl and cfg["disks"]["smart"]:
+        cmds.append(f"{smartctl} -n standby -j -H -A /dev/sd[a-z]")
+        cmds.append(f"{smartctl} -n standby -j -H -A -d sat /dev/sd[a-z]")
+    return cmds
+
+
 def test_mqtt(cfg):
     """Próba-csatlakozás a brokerhez (a telepítő ezzel ellenőrzi a jelszót). 0 = rendben."""
     import paho.mqtt.client as mqtt
@@ -1120,12 +1162,16 @@ def main():
     ap.add_argument("--print-units", action="store_true", help="a figyelt systemd unitok listája")
     ap.add_argument("--remove-discovery", action="store_true", help="HA-entitások eltávolítása")
     ap.add_argument("--test-mqtt", action="store_true", help="próba-bejelentkezés a brokerhez")
+    ap.add_argument("--print-sudo", action="store_true", help="a sudo-val futtatott parancsok (telepítőnek)")
     ap.add_argument("--debug", action="store_true")
     args = ap.parse_args()
     logging.basicConfig(level=logging.DEBUG if args.debug else logging.INFO,
                         format="%(levelname)s %(message)s" if os.environ.get("INVOCATION_ID")
                         else "%(asctime)s %(levelname)s %(message)s")
     cfg = load_config(args.config)
+    if args.print_sudo:
+        print("\n".join(sudo_commands(cfg)))
+        return
     if args.test_mqtt:
         return test_mqtt(cfg)
     if args.print_units:

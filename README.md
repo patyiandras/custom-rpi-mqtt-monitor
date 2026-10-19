@@ -37,7 +37,7 @@ Alapból figyelt unitok: `ssh`, `docker`, `containerd`, `cloudflared*`, `cockpit
 
 **Docker-konténerenként** külön (al)eszköz, pl. „Raspberry Pi 4B · Docker cloudflared”:
 Fut, Állapot (healthcheck-kel; attribútumok: image, indulás, restart count, exit code, compose projekt),
-**Napló**, Napló frissítése, **Újraindítás**, **Image** frissítés-entitás. Az Image entitás jelzi,
+**Napló**, Napló frissítése, **Újraindítás**, **Image** frissítés-entitás (csak registryből húzott image-nél). Az Image entitás jelzi,
 ha a registryben újabb image van, mint amin a konténer fut. Telepíteni nem tud: a frissítés
 `docker compose pull && docker compose up -d` marad. Az új vagy törölt konténerek maguktól
 megjelennek, illetve eltűnnek.
@@ -57,7 +57,8 @@ content: >
   a *configban felsorolt* unitok újraindítása, konténer-újraindítás és napló lekérése.
   Tetszőleges parancsot nem futtat, payloadból nem épít parancssort.
 - **Szűk jogosultság.** Külön `rpimon` rendszerfelhasználóval fut. A sudo csak a konkrét parancsokat
-  engedi (`systemctl reboot` / `poweroff` / `restart <a configban felsorolt unit>` és `smartctl` olvasás).
+  engedi (`systemctl reboot` / `poweroff` / `restart <a configban felsorolt unit>`, a unitok `journalctl`-naplója
+  — ha a journal a csoporttagsággal nem olvasható — és `smartctl` olvasás).
   Ezeket a telepítő generálja: `/etc/sudoers.d/rpi-mqtt-monitor`.
 - **Elavult parancs ellen.** A megőrzött (retained) parancsokat eldobja, így egy beragadt üzenet nem indítja
   újra a Pi-t újracsatlakozáskor. Indulás után 60 mp-ig nem fogad újraindítást vagy leállítást

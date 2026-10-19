@@ -104,20 +104,14 @@ else
 fi
 
 echo "=== 5/6 Sudo-jogok (csak a konkrét parancsok): $SUDOERS ==="
-SYSTEMCTL=$(command -v systemctl)
-SMARTCTL=$(command -v smartctl || true)
 TMP=$(mktemp)
+CMDS=$(sudo -u "$APP_USER" python3 "$APP_DIR/rpi_mqtt_monitor.py" --config "$CONF" --print-sudo)
 {
   echo "# custom-rpi-mqtt-monitor — generálta: install.sh ($(date '+%F %T')). Kézzel ne szerkeszd."
-  echo "$APP_USER ALL=(root) NOPASSWD: $SYSTEMCTL reboot, $SYSTEMCTL poweroff"
-  UNITS=$(sudo -u "$APP_USER" python3 "$APP_DIR/rpi_mqtt_monitor.py" --config "$CONF" --print-units)
-  for u in $UNITS; do
-    # csak biztonságos unitnév kerülhet a sudoers-be
-    [[ "$u" =~ ^[A-Za-z0-9@._-]+$ ]] && echo "$APP_USER ALL=(root) NOPASSWD: $SYSTEMCTL restart $u"
-  done
-  if [ -n "$SMARTCTL" ]; then
-    echo "$APP_USER ALL=(root) NOPASSWD: $SMARTCTL -n standby -j -H -A /dev/sd[a-z], $SMARTCTL -n standby -j -H -A -d sat /dev/sd[a-z]"
-  fi
+  SAFE='^/[][A-Za-z0-9@._/ -]+$'   # csak abszolút útvonalú, biztonságos karakterekből álló parancs
+  while IFS= read -r cmd; do
+    [[ "$cmd" =~ $SAFE ]] && echo "$APP_USER ALL=(root) NOPASSWD: $cmd"
+  done <<< "$CMDS"
 } > "$TMP"
 visudo -cf "$TMP" >/dev/null || { echo "[HIBA] A generált sudoers hibás:"; cat "$TMP"; rm -f "$TMP"; exit 1; }
 install -m 440 "$TMP" "$SUDOERS"
