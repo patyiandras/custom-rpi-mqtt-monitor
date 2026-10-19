@@ -1,11 +1,13 @@
 # custom-rpi-mqtt-monitor
 
-Kis Python-szolgáltatás a Raspberry Pi-re (elsősorban Pi 4B, Raspberry Pi OS / Debian 12+):
+Kis Python-szolgáltatás a Raspberry Pi-re (elsősorban Pi 4B; Raspberry Pi OS / Raspbian Buster-től, Python 3.7+):
 a Pi állapotát MQTT-n küldi a Home Assistantnak **MQTT Discovery**-vel, így a Pi magától
 megjelenik eszközként, szenzorokkal és gombokkal. Weboldal, nyitott port és bejelentkezés nem kell:
 a Pi csak kifelé csatlakozik a brokerhez.
 
-Függőség: `python3`, `python3-paho-mqtt` (1.6 és 2.x is jó), opcionálisan `smartmontools`.
+Függőség: `python3`, `python3-paho-mqtt` (1.4-től 2.x-ig jó), Python 3.11 alatt `python3-toml`,
+opcionálisan `smartmontools` (a SMART-adatokhoz 7.0+ kell, mert JSON-kimenetet használ; Busteren 6.6 van,
+ott a SMART-entitások egyszerűen nem jelennek meg).
 Minden mást közvetlenül a `/proc`, `/sys`, `systemctl`, `journalctl` és a Docker Engine API
 (unix socket) ad.
 

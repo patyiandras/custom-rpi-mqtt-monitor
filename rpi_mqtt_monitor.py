@@ -5,7 +5,8 @@ Futtatás:      rpi_mqtt_monitor.py --config /etc/rpi-mqtt-monitor/config.toml
 Próba (MQTT nélkül, kiírja az összegyűjtött adatokat):  ... --dump
 A telepítő használja:  --print-units (a figyelt systemd unitok), --remove-discovery (eltávolításkor)
 
-Csak a standard könyvtárat és a paho-mqtt-t használja (Debian: python3-paho-mqtt, 1.6 és 2.x is jó).
+Csak a standard könyvtárat és a paho-mqtt-t használja (Debian: python3-paho-mqtt, 1.4-től 2.x-ig jó).
+Python 3.7+ (Raspbian Buster is); 3.11 alatt a TOML-hoz python3-toml (vagy tomli) kell.
 """
 import argparse
 import http.client
@@ -25,10 +26,14 @@ from datetime import datetime, timezone
 
 try:
     import tomllib
-except ModuleNotFoundError:  # Python < 3.11
-    import tomli as tomllib
+except ImportError:  # Python < 3.11
+    try:
+        import tomli as tomllib
+    except ImportError:  # Debian 10/11: python3-toml
+        tomllib = None
+        import toml
 
-VERSION = "0.1.0"
+VERSION = "0.1.1"
 REPO_URL = "https://github.com/patyiandras/custom-rpi-mqtt-monitor"
 ORIGIN = {"name": "custom-rpi-mqtt-monitor", "sw_version": VERSION, "support_url": REPO_URL}
 
@@ -68,8 +73,12 @@ ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 #  Segédfüggvények
 # ---------------------------------------------------------------------------
 def load_config(path):
-    with open(path, "rb") as f:
-        user = tomllib.load(f)
+    if tomllib:
+        with open(path, "rb") as f:
+            user = tomllib.load(f)
+    else:
+        with open(path, encoding="utf-8") as f:
+            user = toml.load(f)
     cfg = {section: dict(values) for section, values in DEFAULT_CONFIG.items()}
     for section, values in user.items():
         if section not in cfg or not isinstance(values, dict):
@@ -98,6 +107,10 @@ def run(cmd, timeout=30):
         return p.returncode, p.stdout, p.stderr
     except (OSError, subprocess.TimeoutExpired) as e:
         return -1, "", str(e)
+
+
+def unit_name(unit):
+    return unit[:-len(".service")] if unit.endswith(".service") else unit
 
 
 def slug(text):
@@ -559,6 +572,7 @@ class Monitor:
         self.started = time.monotonic()
         self.queue = queue.Queue()
         self.running = True
+        self.connected = False
         self.client = None if dry_run else self._mqtt_client()
         # állapot
         self.units = []                # figyelt unitok
@@ -596,7 +610,7 @@ class Monitor:
         client.will_set(self.avail_topic, "offline", qos=1, retain=True)
         client.reconnect_delay_set(1, 60)
         client.on_connect = self._on_connect
-        client.on_disconnect = lambda *a: log.warning("MQTT-kapcsolat megszakadt")
+        client.on_disconnect = self._on_disconnect
         client.on_message = self._on_message
         return client
 
@@ -605,9 +619,14 @@ class Monitor:
             log.error("MQTT-csatlakozás sikertelen: %s", rc)
             return
         log.info("MQTT csatlakozva: %s:%s", self.cfg["mqtt"]["host"], self.cfg["mqtt"]["port"])
+        self.connected = True
         client.subscribe(f"{self.base}/cmd/#", qos=1)
         client.subscribe(f"{self.disc_prefix}/status", qos=1)
         self.queue.put(("connected", None))
+
+    def _on_disconnect(self, *args):
+        self.connected = False
+        log.warning("MQTT-kapcsolat megszakadt")
 
     def _on_message(self, client, userdata, msg):
         if msg.topic == f"{self.disc_prefix}/status":
@@ -758,7 +777,7 @@ class Monitor:
         self.groups[group] = {}
         restart_ok = self.cfg["services" if kind == "svc" else "docker"]["restart"]
         for key, item in items.items():
-            name = item["unit"].removesuffix(".service") if kind == "svc" else item["name"]
+            name = unit_name(item["unit"]) if kind == "svc" else item["name"]
             model = (item.get("description") or "systemd unit") if kind == "svc" else item["image"]
             dev = self.sub_device(kind, key, name if kind == "svc" else f"Docker {name}", model)
             topic = f"{self.base}/{'service' if kind == 'svc' else 'container'}/{key}"
@@ -819,7 +838,7 @@ class Monitor:
         for unit in self.units:
             st = self.services.status(unit)
             if st:
-                data[slug(unit.removesuffix(".service"))] = st
+                data[slug(unit_name(unit))] = st
         changed = set(data) != set(self.service_data)
         for key, st in data.items():
             prev = self.service_data.get(key)
@@ -933,7 +952,7 @@ class Monitor:
                 st = self.service_data.get(key)
                 if not st:
                     return self.report(f"{key} {action}", False, "ismeretlen szolgáltatás")
-                name = st["unit"].removesuffix(".service")
+                name = unit_name(st["unit"])
                 if action == "log":
                     self.publish(f"{self.base}/service/{key}/log", self.services.logs(st["unit"], self.lines), force=True)
                     return
@@ -981,7 +1000,7 @@ class Monitor:
         try:
             while self.running:
                 now = time.monotonic()
-                if self.client.is_connected():
+                if self.connected:
                     try:
                         if now >= self.next_fast:
                             self.next_fast = now + iv["fast"]
@@ -1051,7 +1070,7 @@ class Monitor:
         self.client.connect(m["host"], int(m["port"]), int(m["keepalive"]))
         self.client.loop_start()
         for topic in topics + [self.avail_topic]:
-            self.client.publish(topic, "", qos=1, retain=True).wait_for_publish(5)
+            self.client.publish(topic, "", qos=1, retain=True).wait_for_publish()
         self.client.loop_stop()
         self.client.disconnect()
         print(f"{len(topics)} entitás discovery-je törölve.")

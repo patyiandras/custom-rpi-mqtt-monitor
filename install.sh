@@ -32,7 +32,7 @@ fi
 
 echo "=== 1/6 Csomagok ==="
 PKGS="python3 python3-paho-mqtt smartmontools"
-python3 -c 'import tomllib' 2>/dev/null || PKGS="$PKGS python3-tomli"
+python3 -c 'import tomllib' 2>/dev/null || PKGS="$PKGS python3-toml"   # Python < 3.11 (pl. Buster)
 apt-get install -y --no-install-recommends $PKGS >/dev/null 2>&1 || { apt-get update >/dev/null; apt-get install -y --no-install-recommends $PKGS >/dev/null; }
 echo "OK: $PKGS"
 
