@@ -79,6 +79,11 @@ class SmokeTest(unittest.TestCase):
                "sub": "running", "state_text": "fut"}
         ct = {"name": "cloudflared", "image": "cloudflare/cloudflared:latest", "running": False,
               "state_text": "leállt (1)", "status": "exited"}
+        self.m.system.has_zram = True
+        fast.update({"zram_usage": 20.8, "zram_ratio": 4.0, "zram_mem_mb": 27.0, "zram_size_mb": 480.0,
+                     "zram_data_mb": 100.0, "zram_compr_mb": 25.0, "zram_algorithm": "lz4", "zram_devices": []})
+        procs = {"top": "node (293 MB)", "updated": "x",
+                 "processes": [{"name": "node", "pid": 20, "rss_mb": 293.0, "container": "gtfs-manager"}]}
         self.m.build_system_discovery()
         self.m.build_disk_discovery()
         self.m.build_unit_discovery("services", "svc", {"cloudflared": svc})
@@ -93,6 +98,7 @@ class SmokeTest(unittest.TestCase):
             f"{self.m.base}/service/cloudflared/log": rmm.log_payload(["x"], 40),
             f"{self.m.base}/container/cloudflared/log": rmm.log_payload([], 40),
             f"{self.m.base}/last_command": {"state": "ok"},
+            f"{self.m.base}/processes": procs,
         }
         rendered, ids = {}, set()
         for group in self.m.groups.values():
@@ -112,6 +118,8 @@ class SmokeTest(unittest.TestCase):
         self.assertEqual(rendered["binary_sensor.pi4b_ct_cloudflared_fut"], "OFF")
         self.assertEqual(rendered["binary_sensor.pi4b_sda_smart"], "OFF")
         self.assertEqual(rendered["sensor.pi4b_tarhely_mnt_hdd"], "77.0")
+        self.assertEqual(rendered["sensor.pi4b_zram_tomorites"], "4.0")
+        self.assertEqual(rendered["sensor.pi4b_memoria_top"], "node (293 MB)")
         self.assertIn("button.pi4b_ujrainditas", {c["default_entity_id"] for g in self.m.groups.values()
                                                    for c in g.values()})
 

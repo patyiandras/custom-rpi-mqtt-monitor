@@ -33,7 +33,7 @@ except ImportError:  # Python < 3.11
         tomllib = None
         import toml
 
-VERSION = "0.1.4"
+VERSION = "0.1.5"
 REPO_URL = "https://github.com/patyiandras/custom-rpi-mqtt-monitor"
 ORIGIN = {"name": "custom-rpi-mqtt-monitor", "sw_version": VERSION, "support_url": REPO_URL}
 
@@ -46,7 +46,7 @@ DEFAULT_CONFIG = {
         "discovery_prefix": "homeassistant", "base_topic": "rpi-mqtt-monitor", "keepalive": 60,
     },
     "device": {"id": "pi4b", "name": "Raspberry Pi 4B"},
-    "intervals": {"fast": 30, "slow": 300, "updates": 3600},
+    "intervals": {"fast": 30, "slow": 300, "updates": 3600, "processes": 60},
     "services": {"units": ["ssh", "docker", "cloudflared*"], "restart": True},
     "docker": {
         "enabled": True, "socket": "/var/run/docker.sock", "restart": True,
@@ -143,6 +143,7 @@ class System:
         self.cpu_usage()  # alapérték a következő méréshez
         self.has_throttled = self.throttled() is not None
         self.has_wifi = self.wifi_signal() is not None
+        self.has_zram = self.zram() is not None
 
     def device_info(self):
         os_release = dict(
@@ -237,6 +238,74 @@ class System:
         except ValueError:
             return None
 
+    @staticmethod
+    def zram():
+        """zram-eszközök (tömörített swap a RAM-ban): méret, tárolt adat, tömörített méret, RAM-foglalás."""
+        try:
+            names = sorted(n for n in os.listdir("/sys/block") if n.startswith("zram"))
+        except OSError:
+            return None
+        swaps = {}
+        for line in (read("/proc/swaps", "") or "").splitlines()[1:]:
+            f = line.split()
+            if len(f) >= 4:
+                swaps[os.path.basename(f[0])] = (int(f[2]), int(f[3]))  # méret, használt (kB)
+        devs = []
+        for name in names:
+            size = int(read(f"/sys/block/{name}/disksize") or 0)
+            if not size:
+                continue
+            mm = (read(f"/sys/block/{name}/mm_stat") or "").split()
+            orig, compr, used = (int(mm[0]), int(mm[1]), int(mm[2])) if len(mm) >= 3 else (0, 0, 0)
+            algo = re.search(r"\[(\w+)\]", read(f"/sys/block/{name}/comp_algorithm") or "")
+            devs.append({
+                "name": name, "size_mb": round(size / 2**20, 1), "data_mb": round(orig / 2**20, 1),
+                "compr_mb": round(compr / 2**20, 1), "mem_mb": round(used / 2**20, 1),
+                "swap": name in swaps, "algorithm": algo.group(1) if algo else None,
+            })
+        if not devs:
+            return None
+        tot = lambda k: round(sum(d[k] for d in devs), 1)  # noqa: E731
+        size, data, compr = tot("size_mb"), tot("data_mb"), tot("compr_mb")
+        return {
+            "zram_usage": round(100 * data / size, 1) if size else 0,
+            "zram_ratio": round(data / compr, 2) if compr else None,
+            "zram_mem_mb": tot("mem_mb"), "zram_size_mb": size, "zram_data_mb": data, "zram_compr_mb": compr,
+            "zram_algorithm": devs[0]["algorithm"], "zram_devices": devs,
+        }
+
+    @staticmethod
+    def top_processes(n, containers=None):
+        """A legtöbb memóriát (RSS) használó n folyamat; Docker-konténerben futónál a konténer neve is."""
+        total = (System.meminfo().get("MemTotal") or 1)
+        by_id = {c.get("full_id"): c.get("name") for c in (containers or {}).values()}
+        procs = []
+        for pid in os.listdir("/proc"):
+            if not pid.isdigit():
+                continue
+            try:
+                with open(f"/proc/{pid}/status", encoding="utf-8", errors="replace") as f:
+                    st = dict(line.split(":", 1) for line in f if ":" in line)
+            except OSError:
+                continue
+            if "VmRSS" not in st:  # kernel-szál
+                continue
+            rss = int(st["VmRSS"].split()[0])
+            procs.append((rss, int(pid), st.get("Name", "?").strip(), int((st.get("VmSwap") or "0 kB").split()[0])))
+        procs.sort(reverse=True)
+        out = []
+        for rss, pid, name, swap in procs[:n]:
+            cmd = (read(f"/proc/{pid}/cmdline", "") or "").replace("\x00", " ").strip()
+            m = re.search(r"docker[-/]([0-9a-f]{64})", read(f"/proc/{pid}/cgroup", "") or "")
+            out.append({
+                "name": name, "pid": pid, "rss_mb": round(rss / 1024, 1), "swap_mb": round(swap / 1024, 1),
+                "pct": round(100 * rss / total, 1), "container": by_id.get(m.group(1)) if m else None,
+                "cmd": cmd[:120],
+            })
+        top = out[0] if out else None
+        return {"top": f"{top['name']} ({top['rss_mb']:.0f} MB)" if top else "–", "processes": out,
+                "updated": iso()}
+
     def collect_fast(self):
         mem = self.meminfo()
         mem_total, mem_avail = mem.get("MemTotal", 0), mem.get("MemAvailable", 0)
@@ -259,6 +328,8 @@ class System:
         }
         if self.has_wifi:
             data["wifi_signal"] = self.wifi_signal()
+        if self.has_zram:
+            data.update(self.zram() or {})
         if self.has_throttled:
             t = self.throttled() or 0
             data.update({
@@ -618,6 +689,7 @@ class Monitor:
         self.last_payload = {}         # állapot-topic -> json (változás-figyelés)
         self.last_cmd = {}
         self.last_slow_extra = {"updates": None, "updates_security": None, "updates_list": []}
+        self.next_proc = 0
         self.cleaned = set()
         self.state_file = os.path.join(os.environ.get("STATE_DIRECTORY", "/var/lib/rpi-mqtt-monitor"),
                                        "discovery.json")
@@ -739,6 +811,20 @@ class Monitor:
                json_attributes_template="{{ {'hasznalt_mb': value_json.mem_used_mb, "
                                         "'osszes_mb': value_json.mem_total_mb} | tojson }}", **meas)
         sensor("swap", "Swap-használat", "swap_usage", unit_of_measurement="%", icon="mdi:swap-horizontal", **meas)
+        if self.system.has_zram:
+            sensor("zram", "zram-használat", "zram_usage", unit_of_measurement="%", icon="mdi:memory-arrow-down",
+                   json_attributes_topic=fast,
+                   json_attributes_template="{{ {'meret_mb': value_json.zram_size_mb, 'adat_mb': value_json.zram_data_mb, "
+                                            "'tomoritett_mb': value_json.zram_compr_mb, 'algoritmus': value_json.zram_algorithm, "
+                                            "'eszkozok': value_json.zram_devices} | tojson }}", **meas)
+            sensor("zram_tomorites", "zram tömörítési arány", "zram_ratio", unit_of_measurement="×",
+                   icon="mdi:arrow-collapse-vertical", suggested_display_precision=2, **meas)
+            sensor("zram_ram", "zram RAM-foglalás", "zram_mem_mb", unit_of_measurement="MB",
+                   device_class="data_size", **meas)
+        procs = f"{self.base}/processes"
+        sensor("memoria_top", "Memória top folyamat", "top", topic=procs, icon="mdi:format-list-numbered",
+               json_attributes_topic=procs,
+               json_attributes_template="{{ {'folyamatok': value_json.processes, 'frissitve': value_json.updated} | tojson }}")
         sensor("halozat_le", "Hálózat le", "net_rx", unit_of_measurement="kB/s", device_class="data_rate", **meas)
         sensor("halozat_fel", "Hálózat fel", "net_tx", unit_of_measurement="kB/s", device_class="data_rate", **meas)
         sensor("ip_cim", "IP-cím", "ip", icon="mdi:ip-network", **diag)
@@ -907,6 +993,9 @@ class Monitor:
         self.publish(f"{self.base}/system", self.system.collect_fast())
         self.collect_services()
         self.collect_containers()
+        if time.monotonic() >= self.next_proc:
+            self.next_proc = time.monotonic() + self.cfg["intervals"]["processes"]
+            self.publish(f"{self.base}/processes", self.system.top_processes(10, self.container_data))
 
     def collect_slow(self):
         mounts, disks = self.disk_data = self.disks.collect()
@@ -977,6 +1066,7 @@ class Monitor:
             return
         if parts == ["refresh"]:
             self.last_payload.clear()
+            self.next_proc = 0
             self.collect_fast()
             self.collect_slow()
             return self.report("Adatok frissítése", True)

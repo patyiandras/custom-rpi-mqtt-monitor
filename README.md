@@ -19,6 +19,8 @@ Minden mást közvetlenül a `/proc`, `/sys`, `systemctl`, `journalctl` és a Do
 |---|---|
 | CPU hőmérséklet, CPU-terhelés, CPU-frekvencia, Load (1/5/15 perc) | 30 mp-enként |
 | Memória-használat (attribútum: MB), Swap-használat | |
+| zram-használat (attribútum: eszközönként méret, adat, tömörített, algoritmus), zram tömörítési arány, zram RAM-foglalás | ha van zram |
+| Memória top folyamat (attribútum: a 10 legtöbb RSS-t használó folyamat — név, PID, MB, swap, %, Docker-konténer, parancssor) | percenként |
 | Hálózat le / fel (kB/s), IP-cím, WiFi-jel (ha WiFi-n van) | |
 | Bekapcsolás ideje | timestamp |
 | Alulfeszültség, Fojtás (hő/frekvencia), Fojtás vagy alulfeszültség volt indulás óta, Throttled-kód | `get_throttled` bitjei — a Pi tápellátásának legfontosabb jelzője |

@@ -19,6 +19,7 @@ name = "Raspberry Pi 4B"
 fast = 30                     # mp: CPU, RAM, hőmérséklet, hálózat, szolgáltatások, konténerek
 slow = 300                    # mp: lemezek, SMART, image-lista
 updates = 3600                # mp: apt-frissítések, Docker image-frissítések (registry)
+processes = 60                # mp: a 10 legtöbb memóriát használó folyamat
 
 [services]
 # Figyelt systemd unitok (glob is lehet; utótag nélkül .service). Állapot + napló + újraindítás.
