@@ -78,11 +78,11 @@ content: >
 HA → Beállítások → Bővítmények → **Mosquitto broker** → Konfiguráció → `logins`:
 
 ```yaml
-- username: pi4b
+- username: pi4b          # szabadon választható; a telepítő ezt kéri be elsőként
   password: <hosszú véletlen jelszó>
 ```
 
-Mentés, majd a bővítmény újraindítása.
+Mentés, majd a bővítmény újraindítása. Több Pi esetén mindegyiknek külön felhasználót érdemes adni.
 
 ### 2. Telepítés a Pi-n
 
@@ -92,7 +92,7 @@ cd custom-rpi-mqtt-monitor
 sudo ./install.sh
 ```
 
-A telepítő az adatok bekérése előtt kiírja a HA-oldali teendőket (Mosquitto, MQTT-user, MQTT integráció), majd bekéri a broker címét, az MQTT-felhasználót és a jelszót, valamint az eszköz HA-beli nevét
+A telepítő az adatok bekérése előtt kiírja a HA-oldali teendőket (Mosquitto, MQTT-user, MQTT integráció), előtte bekéri a választott MQTT-felhasználónevet (ez szerepel a kiírt teendőkben), majd a broker címét és a jelszót, valamint az eszköz HA-beli nevét
 (alapból „Raspberry Pi 4B”) és az entitás-azonosító előtagot (alapból `pi4b` → `sensor.pi4b_…`). Újrafuttatáskor
 Enterre a meglévő érték marad. Ha az előtagot megváltoztatod, a régi előtagú entitásokat előbb törli a HA-ból. A jelszót próba-bejelentkezéssel ellenőrzi, és csak akkor megy tovább, ha a broker elfogadta. A többi
 beállítás (pl. figyelt szolgáltatások) a `/etc/rpi-mqtt-monitor/config.toml`-ban van; módosítás után

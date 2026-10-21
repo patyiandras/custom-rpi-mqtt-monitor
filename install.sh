@@ -98,8 +98,15 @@ PYEOF
 }
 
 if [ -t 0 ]; then
+  # --- Az MQTT-felhasználó neve szabadon választható: előbb ezt kérjük, hogy a HA-teendőkben már ez szerepeljen
+  CUR_USER=$(conf_value mqtt username); CUR_USER=${CUR_USER:-pi4b}
+  echo
+  echo "Ennek a gépnek saját MQTT-felhasználó kell a Home Assistant"
+  echo "Mosquitto brokerében. A neve szabadon választható."
+  read -r -p "MQTT felhasználónév [$CUR_USER]: " NEW_USER || true
+  [ -n "$NEW_USER" ] && set_value mqtt username "$NEW_USER"
+  HA_USER=$(conf_value mqtt username)
   # --- Mit kell előtte a Home Assistantban beállítani (rövid sorok: telefonos terminálban is olvasható)
-  HA_USER=$(conf_value mqtt username); HA_USER=${HA_USER:-pi4b}
   cat <<EOF
 
 ------------------------------------------------------------
@@ -129,7 +136,10 @@ EOF
   for attempt in 1 2 3; do
     CUR_HOST=$(conf_value mqtt host); CUR_USER=$(conf_value mqtt username); CUR_PASS=$(conf_value mqtt password)
     read -r -p "MQTT broker címe [$CUR_HOST]: " NEW_HOST || true
-    read -r -p "MQTT felhasználó [$CUR_USER]: " NEW_USER || true
+    NEW_USER=""
+    if [ "$attempt" -gt 1 ]; then  # sikertelen bejelentkezés után a név is javítható
+      read -r -p "MQTT felhasználó [$CUR_USER]: " NEW_USER || true
+    fi
     if [ "$CUR_PASS" = "IDE_A_JELSZO" ] || [ -z "$CUR_PASS" ]; then
       PROMPT="MQTT jelszó: "
     else
