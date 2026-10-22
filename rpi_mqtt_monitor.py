@@ -33,7 +33,7 @@ except ImportError:  # Python < 3.11
         tomllib = None
         import toml
 
-VERSION = "0.1.5"
+VERSION = "0.1.6"
 REPO_URL = "https://github.com/patyiandras/custom-rpi-mqtt-monitor"
 ORIGIN = {"name": "custom-rpi-mqtt-monitor", "sw_version": VERSION, "support_url": REPO_URL}
 
@@ -356,10 +356,19 @@ class System:
 # ---------------------------------------------------------------------------
 #  Lemezek: telítettség + SMART
 # ---------------------------------------------------------------------------
+def smartctl_path():
+    """A smartctl útvonala, ha tud JSON-t (-j, 7.0+); a régi (Buster: 6.6) nem tud, azt nem hívjuk."""
+    path = shutil.which("smartctl")
+    if not path:
+        return None
+    m = re.search(r"smartctl (\d+)\.", run([path, "--version"], timeout=10)[1])
+    return path if m and int(m.group(1)) >= 7 else None
+
+
 class Disks:
     def __init__(self, cfg):
         self.cfg = cfg
-        self.smartctl = shutil.which("smartctl") if cfg["smart"] else None
+        self.smartctl = smartctl_path() if cfg["smart"] else None
         self.smart_cache = {}
 
     @staticmethod
@@ -1208,8 +1217,8 @@ def sudo_commands(cfg):
         if cfg["services"]["restart"]:
             cmds.append(f"{systemctl} restart {unit}")
         cmds.append(" ".join(Services.log_command(unit, int(cfg["logs"]["lines"]))))
-    smartctl = shutil.which("smartctl")
-    if smartctl and cfg["disks"]["smart"]:
+    smartctl = smartctl_path() if cfg["disks"]["smart"] else None
+    if smartctl:
         cmds.append(f"{smartctl} -n standby -j -H -A /dev/sd[a-z]")
         cmds.append(f"{smartctl} -n standby -j -H -A -d sat /dev/sd[a-z]")
     return cmds
