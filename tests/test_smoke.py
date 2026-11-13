@@ -177,6 +177,22 @@ class SmokeTest(unittest.TestCase):
             self.assertNotIn("full_id", web)
             self.assertEqual(self.render(rmm.binary("running"), web), "OFF")
 
+    def test_missing_image_does_not_break_list(self):
+        """Törölt image (HTTP 404) mellett is listázódnak a konténerek, és futónak látszanak."""
+        d = rmm.Docker(rmm.DEFAULT_CONFIG["docker"])
+
+        def get(path, timeout=30):
+            if path.startswith("/containers/json"):
+                return [{"Id": "a" * 64, "Names": ["/web"], "Status": "Up 5 minutes"}]
+            if path.startswith("/containers/"):
+                return {"State": {"Status": "running", "Running": True}, "Image": "sha256:gone",
+                        "Config": {"Image": "web", "Labels": {}}, "RestartCount": 0}
+            raise rmm.DockerError(f"{path}: HTTP 404 No such image")
+        d.get = get
+        cts = d.containers()
+        self.assertTrue(cts["web"]["running"])
+        self.assertFalse(cts["web"]["registry_image"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -33,7 +33,7 @@ except ImportError:  # Python < 3.11
         tomllib = None
         import toml
 
-VERSION = "0.1.8"
+VERSION = "0.1.9"
 REPO_URL = "https://github.com/patyiandras/custom-rpi-mqtt-monitor"
 ORIGIN = {"name": "custom-rpi-mqtt-monitor", "sw_version": VERSION, "support_url": REPO_URL}
 
@@ -591,7 +591,14 @@ class Docker:
         """Registryből húzott-e az image (van RepoDigest)? Helyben épített image-hez nincs frissítés-ellenőrzés."""
         cache = self.__dict__.setdefault("_registry_cache", {})
         if image_id not in cache:
-            img = self.get(f"/images/{urllib.parse.quote(image_id, safe=':')}/json")
+            try:
+                img = self.get(f"/images/{urllib.parse.quote(image_id, safe=':')}/json")
+            except DockerError as e:
+                # A konténer image-ét közben törölték/újraépítették (HTTP 404): a konténer ettől még
+                # fut, csak frissítés-ellenőrzés nincs hozzá. Nem buktathatja el a teljes listát.
+                log.info("Image nem kérdezhető le (%s) - frissítés-ellenőrzés nélkül", e)
+                cache[image_id] = False
+                return False
             cache[image_id] = any("@" in d for d in img.get("RepoDigests") or [])
         return cache[image_id]
 
