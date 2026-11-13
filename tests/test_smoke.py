@@ -154,6 +154,29 @@ class SmokeTest(unittest.TestCase):
         out = d.logs({"full_id": "x", "tty": False}, 40)
         self.assertEqual(out["lines"], ["2026-10-19 08:00:00 hello"])
 
+    def test_docker_down_not_running(self):
+        """Ha a Docker leáll, a korábban futó konténer NEM maradhat "fut" állapotban (retained payload)."""
+        self.m.container_data = {"web": {"name": "web", "full_id": "abc", "status": "running", "running": True,
+                                         "health": None, "state_text": "fut", "image_id": "i"}}
+        self.m.previous_groups = {"containers": [
+            "homeassistant/binary_sensor/pi4b/ct_web_fut/config",
+            "homeassistant/binary_sensor/pi4b/ct_regi_kontener_fut/config",
+        ]}
+        published = {}
+        self.m.publish = lambda topic, payload, **k: published.__setitem__(topic, payload)
+        for avail, err in ((False, None), (True, rmm.DockerError("conn refused"))):
+            published.clear()
+            self.m.docker.available = lambda a=avail: a
+            if err:
+                self.m.docker.containers = lambda e=err: (_ for _ in ()).throw(e)
+            self.m.collect_containers()
+            web = published[f"{self.m.base}/container/web"]
+            self.assertFalse(web["running"])
+            self.assertIn("ismeretlen", web["state_text"])
+            self.assertFalse(published[f"{self.m.base}/container/regi_kontener"]["running"])
+            self.assertNotIn("full_id", web)
+            self.assertEqual(self.render(rmm.binary("running"), web), "OFF")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -33,7 +33,7 @@ except ImportError:  # Python < 3.11
         tomllib = None
         import toml
 
-VERSION = "0.1.7"
+VERSION = "0.1.8"
 REPO_URL = "https://github.com/patyiandras/custom-rpi-mqtt-monitor"
 ORIGIN = {"name": "custom-rpi-mqtt-monitor", "sw_version": VERSION, "support_url": REPO_URL}
 
@@ -984,8 +984,26 @@ class Monitor:
             self.build_unit_discovery("services", "svc", data)
             self.sync_discovery()
 
+    def mark_containers_unavailable(self, reason):
+        """A Docker nem érhető el: a konténerek állapota ismeretlen. A retained "fut" üzenet nem
+        maradhat bent, különben a HA a teljes kiesés alatt futónak mutatná őket."""
+        for key, ct in self.container_data.items():
+            ct.update(status="unknown", running=False, health=None, state_text=f"ismeretlen ({reason})")
+            self.publish(f"{self.base}/container/{key}", {k: v for k, v in ct.items() if k != "full_id"})
+        # ha a monitor a Docker kiesése alatt indult, az előző futás konténereit is le kell jelenteni
+        for topic in self.previous_groups.get("containers", []):
+            m = re.search(r"/ct_(.+)_fut/config$", topic)
+            if m and m.group(1) not in self.container_data:
+                self.publish(f"{self.base}/container/{m.group(1)}", {
+                    "name": m.group(1), "status": "unknown", "running": False, "health": None,
+                    "state_text": f"ismeretlen ({reason})",
+                })
+
     def collect_containers(self):
+        if not self.cfg["docker"]["enabled"]:
+            return
         if not self.docker.available():
+            self.mark_containers_unavailable("a Docker nem fut")
             return
         try:
             data = self.docker.containers()
@@ -996,6 +1014,7 @@ class Monitor:
                     self.publish(f"{self.base}/container/{key}/log", self.docker.logs(ct, self.lines))
         except (DockerError, ValueError, KeyError) as e:
             log.warning("Docker-lekérdezés sikertelen: %s", e)
+            self.mark_containers_unavailable("a Docker nem válaszol")
             return
         changed = set(data) != set(self.container_data)
         self.container_data = data
@@ -1027,6 +1046,7 @@ class Monitor:
                 slow.update(self.docker.images(self.container_data))
             except (DockerError, ValueError, KeyError) as e:
                 log.warning("Docker image-lista sikertelen: %s", e)
+        if self.cfg["docker"]["enabled"]:
             slow["containers_running"] = sum(1 for c in self.container_data.values() if c["running"])
         self.publish(f"{self.base}/system_slow", slow)
         self.build_disk_discovery()
