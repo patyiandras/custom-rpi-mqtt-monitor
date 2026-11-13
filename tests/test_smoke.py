@@ -67,6 +67,8 @@ class SmokeTest(unittest.TestCase):
         self.assertTrue(fast["undervoltage"])          # 0x50005: 0. bit
         self.assertTrue(fast["throttling"])            # 2. bit
         self.assertTrue(fast["throttled_since_boot"])  # 16./18. bit
+        self.assertTrue(fast["undervoltage_since_boot"])  # 16. bit
+        self.assertFalse(fast["overheat_since_boot"])     # 18. bit, de alulfeszültséggel együtt
         slow = {"updates": 3, "updates_security": 1, "updates_list": ["a", "b", "c"], "reboot_required": False,
                 "kernel": "k", "os": "o", "agent_version": rmm.VERSION, "images_count": 4, "images_dangling": 1,
                 "images_unused": 2, "images_size_gb": 1.2, "containers_running": 2}

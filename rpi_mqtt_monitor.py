@@ -33,7 +33,7 @@ except ImportError:  # Python < 3.11
         tomllib = None
         import toml
 
-VERSION = "0.1.6"
+VERSION = "0.1.7"
 REPO_URL = "https://github.com/patyiandras/custom-rpi-mqtt-monitor"
 ORIGIN = {"name": "custom-rpi-mqtt-monitor", "sw_version": VERSION, "support_url": REPO_URL}
 
@@ -337,6 +337,10 @@ class System:
                 "undervoltage": bool(t & 0x1),
                 "throttling": bool(t & 0xE),
                 "throttled_since_boot": bool(t & 0xF0000),
+                # indulás óta (újraindításig megmarad): 16 = alulfeszültség; 19 = hő-korlát, illetve
+                # 17/18 (frekvencia-korlát / fojtás) alulfeszültség nélkül — azt a hő okozta
+                "undervoltage_since_boot": bool(t & 0x10000),
+                "overheat_since_boot": bool(t & 0x80000) or (bool(t & 0x60000) and not t & 0x10000),
             })
         return data
 
@@ -846,7 +850,8 @@ class Monitor:
             for key, name, field, extra in (
                 ("alulfeszultseg", "Alulfeszültség", "undervoltage", {}),
                 ("korlatozas", "Fojtás (hő/frekvencia)", "throttling", {}),
-                ("korlatozas_volt", "Fojtás vagy alulfeszültség volt indulás óta", "throttled_since_boot", diag),
+                ("tulmelegedes_volt", "Túlmelegedés volt indulás óta", "overheat_since_boot", {}),
+                ("alulfeszultseg_volt", "Alulfeszültség volt indulás óta", "undervoltage_since_boot", {}),
             ):
                 self.entity(g, "binary_sensor", key, name, dev, state_topic=fast, value_template=binary(field),
                             device_class="problem", **extra)
