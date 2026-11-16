@@ -33,7 +33,7 @@ except ImportError:  # Python < 3.11
         tomllib = None
         import toml
 
-VERSION = "0.1.9"
+VERSION = "0.1.10"
 REPO_URL = "https://github.com/patyiandras/custom-rpi-mqtt-monitor"
 ORIGIN = {"name": "custom-rpi-mqtt-monitor", "sw_version": VERSION, "support_url": REPO_URL}
 
@@ -370,10 +370,18 @@ def smartctl_path():
 
 
 class Disks:
-    def __init__(self, cfg):
+    def __init__(self, cfg, state_dir=None):
         self.cfg = cfg
         self.smartctl = smartctl_path() if cfg["smart"] else None
         self.smart_cache = {}
+        # A már látott csatolási pontok: ha egy lemez leválik (pl. USB-HDD), az entitása megmarad
+        # „nincs csatolva” állapotban, nem tűnik el a HA-ból. Végleges elhagyás: exclude_mounts.
+        self.known_file = os.path.join(state_dir, "mounts.json") if state_dir else None
+        try:
+            with open(self.known_file) as f:
+                self.known = json.load(f)
+        except (OSError, TypeError, ValueError):
+            self.known = {}
 
     @staticmethod
     def parent_disk(dev, mnt=None):
@@ -468,7 +476,26 @@ class Disks:
                 "mount": mnt, "device": dev, "disk": disk, "fstype": fstype, "kind": self.kind(disk),
                 "usage": round(100 * used / (used + avail), 1) if used + avail else 0,
                 "total_gb": round(total / 1e9, 1), "used_gb": round(used / 1e9, 1), "free_gb": round(avail / 1e9, 1),
+                "mounted": True,
             }
+        changed = False
+        for key, m in mounts.items():
+            info = {k: m[k] for k in ("mount", "device", "disk", "fstype", "kind", "total_gb")}
+            if self.known.get(key) != info:
+                self.known[key] = info
+                changed = True
+        wanted = self.cfg["mounts"]
+        for key, info in self.known.items():
+            mnt = info.get("mount")
+            if key in mounts or (wanted and mnt not in wanted) or (not wanted and mnt in self.cfg["exclude_mounts"]):
+                continue
+            mounts[key] = dict(info, mounted=False, usage=None, used_gb=None, free_gb=None)
+        if changed and self.known_file:
+            try:
+                with open(self.known_file, "w") as f:
+                    json.dump(self.known, f)
+            except OSError as e:
+                log.debug("mounts.json nem írható: %s", e)
         return mounts, disks
 
 
@@ -690,7 +717,7 @@ class Monitor:
         self.avail_topic = f"{self.base}/status"
         self.lines = int(cfg["logs"]["lines"])
         self.system = System(m["host"])
-        self.disks = Disks(cfg["disks"])
+        self.disks = Disks(cfg["disks"], os.environ.get("STATE_DIRECTORY", "/var/lib/rpi-mqtt-monitor"))
         self.services = Services(cfg["services"])
         self.docker = Docker(cfg["docker"])
         self.info = self.system.device_info()

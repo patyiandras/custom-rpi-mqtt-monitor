@@ -24,7 +24,7 @@ Minden mást közvetlenül a `/proc`, `/sys`, `systemctl`, `journalctl` és a Do
 | Hálózat le / fel (kB/s), IP-cím, WiFi-jel (ha WiFi-n van) | |
 | Bekapcsolás ideje | timestamp |
 | Alulfeszültség, Fojtás (hő/frekvencia), Túlmelegedés volt / Alulfeszültség volt indulás óta (újraindításig megmarad), Throttled-kód | `get_throttled` bitjei — a Pi tápellátásának legfontosabb jelzője |
-| `<SSD/HDD/SD-kártya> <csatolási pont>` telítettség (%) és szabad hely (GB) | minden valós csatolási pont, 5 percenként |
+| `<SSD/HDD/SD-kártya> <csatolási pont>` telítettség (%) és szabad hely (GB) | minden valós csatolási pont, 5 percenként; a leválasztott lemez entitása megmarad (állapot: ismeretlen, attribútum `mounted: false`), végleg az `exclude_mounts`-szal hagyható el |
 | `<SSD/HDD> (sdX)` hőmérséklet, SMART-hiba | `smartctl`; alvó HDD-t nem ébreszt fel |
 | Frissíthető csomagok (attribútum: biztonsági frissítések száma, csomaglista), Újraindítás szükséges | óránként |
 | Docker image-ek (attribútum: gazdátlan, nem használt), Docker image-ek mérete, Futó konténerek | |
